@@ -4,7 +4,7 @@ An advanced, yet easy-to-use card for Home Assistant that displays your Todoist 
 
 ## 🚀 Why this card? (The New Architecture)
 
-This card is built specifically for Home Assistant's modern **`todo` entity platform**.
+This card is built specifically for Home Assistant's modern **`todoist` integration**.
 
 Many older Todoist cards rely on:
 
@@ -20,13 +20,13 @@ Many older Todoist cards rely on:
 
 * **🔒 Secure:** Uses standard Home Assistant services (`todo.add_item`, `todo.update_item`).
 
-* **🔮 Future-proof:** Aligned with Home Assistant's long-term architecture for task lists.
+* **🔮 Future-proof (hopefully):** Aligned with Home Assistant's long-term architecture for task lists.
 
 ## ✨ Features
 
 * **🎨 Multiple Themes:** Choose between *Standard*, *Minimalist*, *Frosted Glass*, and *Bubble Card* designs.
 
-* **🛠️ Full Customization:** Hide header, hide "add task", change colors, adjust font size, and much more directly in the visual editor.
+* **🛠️ Customization:** Hide header, hide "add task", change colors, adjust font size, and much more directly in the visual editor.
 
 * **🎮 Gamification:** Make chores fun with optional sound effects and confetti animations upon completion.
 
@@ -35,6 +35,8 @@ Many older Todoist cards rely on:
 * **⚡️ Live Updates:** The card updates automatically and remembers your scroll position.
 
 * **📱 Mobile Friendly:** Special "Compact View" and collapsible sections for small screens.
+
+* **🗒️ Project tags:** Allows for multiple lists in the same overview, without needing vertical stacks.
 
 ## 📥 Installation
 
@@ -84,3 +86,4 @@ sound_effect: ding
 ## ♥️ Credit
 Credits to my wife for pushing me to come up with a solution for our HA dashboard, that shows our todoist tasks correctly, and for helping me with features.
 The card is made with a huge focus on WAF (Wife Acceptance Focus) and my ADHD brain (Possibility for gamification, limited tasks etc.)
+
