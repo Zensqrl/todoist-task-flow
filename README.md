@@ -82,8 +82,21 @@ use_gamification: true
 visual_effect: confetti
 sound_effect: ding
 ```
+## 🧩 Filtering & Sorting
+You can choose which filter buttons to show:
+
+* **All:** Shows everything in the lists.
+
+* **Today:** Tasks due today.
+
+* **Overdue:** Tasks you missed.
+
+* **Now:** A combination of "Today" and "Overdue".
+
+* **Week/Month:** Overview of the future.
 
 ## ♥️ Credit
 Credits to my wife for pushing me to come up with a solution for our HA dashboard, that shows our todoist tasks correctly, and for helping me with features.
 The card is made with a huge focus on WAF (Wife Acceptance Focus) and my ADHD brain (Possibility for gamification, limited tasks etc.)
+
 
