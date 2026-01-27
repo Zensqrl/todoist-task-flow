@@ -485,7 +485,6 @@ class TodoistTaskFlow extends HTMLElement {
         }
     });
 
-    // Hidden count footer
     if (hiddenCount > 0) {
         taskListHtml += `<div style="padding:10px; text-align:center; opacity:0.6; font-size:0.9em; font-style:italic;">
             ${this.localize('and_more').replace('{count}', hiddenCount)}
@@ -820,3 +819,10 @@ class TodoistTaskFlowEditor extends HTMLElement {
   }
 }
 customElements.define("todoist-task-flow-editor", TodoistTaskFlowEditor);
+// Registrer custom card for Home Assistant picker
+window.customCards = window.customCards || [];
+window.customCards.push({
+  type: "todoist-task-flow",
+  name: "Todoist Task Flow",
+  description: "A custom card for Todoist tasks with themes, gamification and full customization.",
+});
