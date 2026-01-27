@@ -1,3 +1,5 @@
+![Todoist Task Flow Screenshot](Screenshot.png)
+
 # Todoist Task Flow for Home Assistant
 
 An advanced, yet easy-to-use card for Home Assistant that displays your Todoist tasks. It is designed to look and feel like a "native" app directly in your dashboard.
@@ -68,6 +70,10 @@ The card is 100% configurable via the **visual editor** in Home Assistant. No YA
 
 If you prefer YAML, a typical configuration looks like this:
 
+| Customization | Design Picker |
+| :---: | :---: |
+| ![Editor Config 1](Screenshot1.png) | ![Editor Config 2](Screenshot2.png) |
+
 ```yaml
 type: custom:todoist-task-flow
 title: My Tasks
@@ -98,5 +104,6 @@ You can choose which filter buttons to show:
 ## ♥️ Credit
 Credits to my wife for pushing me to come up with a solution for our HA dashboard, that shows our todoist tasks correctly, and for helping me with features.
 The card is made with a huge focus on WAF (Wife Acceptance Focus) and my ADHD brain (Possibility for gamification, limited tasks etc.)
+
 
 
