@@ -1,4 +1,4 @@
-![Todoist Task Flow Screenshot](Screenshot.png)
+![Todoist Task Flow Screenshot](screenshot.png)
 
 # Todoist Task Flow for Home Assistant
 
@@ -72,7 +72,7 @@ If you prefer YAML, a typical configuration looks like this:
 
 | Customization | Design Picker |
 | :---: | :---: |
-| ![Editor Config 1](Screenshot1.png) | ![Editor Config 2](Screenshot2.png) |
+| ![Editor Config 1](screenshot1.png) | ![Editor Config 2](screenshot2.png) |
 
 ```yaml
 type: custom:todoist-task-flow
@@ -104,6 +104,7 @@ You can choose which filter buttons to show:
 ## ♥️ Credit
 Credits to my wife for pushing me to come up with a solution for our HA dashboard, that shows our todoist tasks correctly, and for helping me with features.
 The card is made with a huge focus on WAF (Wife Acceptance Focus) and my ADHD brain (Possibility for gamification, limited tasks etc.)
+
 
 
 
