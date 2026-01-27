@@ -1,71 +1,72 @@
-Todoist Task Flow for Home Assistant
+# Todoist Task Flow for Home Assistant
 
 An advanced, yet easy-to-use card for Home Assistant that displays your Todoist tasks. It is designed to look and feel like a "native" app directly in your dashboard.
 
-🚀 Why this card? (The New Architecture)
+## 🚀 Why this card? (The New Architecture)
 
-This card is built specifically for Home Assistant's modern todo entity platform.
+This card is built specifically for Home Assistant's modern **`todo` entity platform**.
 
 Many older Todoist cards rely on:
 
-Deprecated methods: Reading task lists from sensor attributes (which bloats your database).
+* **Deprecated methods:** Reading task lists from sensor attributes (which bloats your database).
 
-Calendar integration: Which isn't designed for task management.
+* **Calendar integration:** Which isn't designed for task management.
 
-Iframes: Embedding the entire Todoist website, which is heavy and slow on mobile.
+* **Iframes:** Embedding the entire Todoist website, which is heavy and slow on mobile.
 
-Todoist Task Flow communicates directly with the official integration via efficient WebSocket calls. This means:
+**Todoist Task Flow** communicates directly with the official integration via efficient WebSocket calls. This means:
 
-⚡️ Fast & Lightweight: No attributes cluttering your state machine.
+* **⚡️ Fast & Lightweight:** No attributes cluttering your state machine.
 
-🔒 Secure: Uses standard Home Assistant services (todo.add_item, todo.update_item).
+* **🔒 Secure:** Uses standard Home Assistant services (`todo.add_item`, `todo.update_item`).
 
-🔮 Future-proof: Aligned with Home Assistant's long-term architecture for task lists.
+* **🔮 Future-proof:** Aligned with Home Assistant's long-term architecture for task lists.
 
-✨ Features
+## ✨ Features
 
-🎨 Multiple Themes: Choose between Standard, Minimalist, Frosted Glass, and Bubble Card designs.
+* **🎨 Multiple Themes:** Choose between *Standard*, *Minimalist*, *Frosted Glass*, and *Bubble Card* designs.
 
-🛠️ Full Customization: Hide header, hide "add task", change colors, adjust font size, and much more directly in the visual editor.
+* **🛠️ Full Customization:** Hide header, hide "add task", change colors, adjust font size, and much more directly in the visual editor.
 
-🎮 Gamification: Make chores fun with optional sound effects and confetti animations upon completion.
+* **🎮 Gamification:** Make chores fun with optional sound effects and confetti animations upon completion.
 
-📅 Smart Dates: Displays dates naturally like "Today", "Tomorrow", or "On Monday" instead of raw dates.
+* **📅 Smart Dates:** Displays dates naturally like "Today", "Tomorrow", or "On Monday" instead of raw dates.
 
-⚡️ Live Updates: The card updates automatically and remembers your scroll position.
+* **⚡️ Live Updates:** The card updates automatically and remembers your scroll position.
 
-📱 Mobile Friendly: Special "Compact View" and collapsible sections for small screens.
+* **📱 Mobile Friendly:** Special "Compact View" and collapsible sections for small screens.
 
-📥 Installation
+## 📥 Installation
 
-Option 1: HACS (Recommended)
+### Option 1: HACS (Recommended)
 
-Go to HACS -> Frontend.
+1. Go to HACS -> Frontend.
 
-Click the menu in the top right corner -> Custom repositories.
+2. Click the menu in the top right corner -> **Custom repositories**.
 
-Paste the URL of this GitHub repository.
+3. Paste the URL of this GitHub repository.
 
-Select category: Lovelace.
+4. Select category: **Lovelace**.
 
-Click Add and then Download.
+5. Click **Add** and then **Download**.
 
-Option 2: Manual
+### Option 2: Manual
 
-Download the todoist-task-flow.js file.
+1. Download the `todoist-task-flow.js` file.
 
-Upload it to your /config/www/ folder in Home Assistant.
+2. Upload it to your `/config/www/` folder in Home Assistant.
 
-Go to Settings -> Dashboards -> Resources.
+3. Go to Settings -> Dashboards -> Resources.
 
-Add the resource: /local/todoist-task-flow.js as JavaScript Module.
+4. Add the resource: `/local/todoist-task-flow.js` as **JavaScript Module**.
 
-⚙️ Configuration
+## ⚙️ Configuration
 
-The card is 100% configurable via the visual editor in Home Assistant. No YAML required!
+The card is 100% configurable via the **visual editor** in Home Assistant. No YAML required!
 
 If you prefer YAML, a typical configuration looks like this:
 
+```yaml
 type: custom:todoist-task-flow
 title: My Tasks
 entities:
@@ -78,24 +79,3 @@ default_filter: today
 use_gamification: true
 visual_effect: confetti
 sound_effect: ding
-
-
-🧩 Filtering & Sorting
-
-You can choose which filter buttons to show:
-
-All: Shows everything in the lists.
-
-Today: Tasks due today.
-
-Overdue: Tasks you missed.
-
-Now: A combination of "Today" and "Overdue".
-
-Week/Month: Overview of the future.
-
-❤️ Credits
-Credits to my wife for making me find a solution, and helping me refine what features are needed.
-The card is made with a focus on WAF (Wife/Husband Acceptance Factor) and usability.
-
-Languages available atm: Danish (DA) & English (EN) - English is set as standard unless Danish is choosen in HA
