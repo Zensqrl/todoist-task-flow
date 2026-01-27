@@ -70,9 +70,9 @@ The card is 100% configurable via the **visual editor** in Home Assistant. No YA
 
 If you prefer YAML, a typical configuration looks like this:
 
-| Customizations  |
+**Customizations**
 | :---: | :---: |
-| ![Editor Config 1](screenshot1.png) ![Editor Config 2](screenshot2.png) | ![Editor Config 2](screenshot2.png) |
+| ![Editor Config 1](screenshot1.png) | ![Editor Config 2](screenshot2.png) |
 
 ```yaml
 type: custom:todoist-task-flow
@@ -104,6 +104,7 @@ You can choose which filter buttons to show:
 ## ♥️ Credit
 Credits to my wife for pushing me to come up with a solution for our HA dashboard, that shows our todoist tasks correctly, and for helping me with features.
 The card is made with a huge focus on WAF (Wife Acceptance Focus) and my ADHD brain (Possibility for gamification, limited tasks etc.)
+
 
 
 
