@@ -79,3 +79,8 @@ default_filter: today
 use_gamification: true
 visual_effect: confetti
 sound_effect: ding
+```
+
+## ♥️ Credit
+Credits to my wife for pushing me to come up with a solution for our HA dashboard, that shows our todoist tasks correctly, and for helping me with features.
+The card is made with a huge focus on WAF (Wife Acceptance Focus) and my ADHD brain (Possibility for gamification, limited tasks etc.)
