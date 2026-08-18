@@ -1,4 +1,62 @@
 const TODOIST_KIOSK_DEFAULT_FILTER = '(due before: first day | deadline before: first day) & (!#Daily Checklist | today)';
+const TODOIST_KIOSK_LEGACY_RAW_ID = '__legacy_filter';
+
+function kioskSourceKey(source) {
+  return source?.kind && source?.id ? `${source.kind}:${source.id}` : '';
+}
+
+function normalizeRawFilters(config = {}) {
+  if (!Array.isArray(config.raw_filters)) return [];
+  return config.raw_filters
+    .filter(item => item && item.id && item.name && item.query)
+    .map(item => ({ kind: 'raw_filter', id: String(item.id), name: String(item.name), query: String(item.query) }));
+}
+
+function legacyKioskSource(config = {}) {
+  if (config.project_id) return { kind: 'project', id: String(config.project_id), name: String(config.project_id), legacy: true };
+  if (config.filter_id) return { kind: 'saved_filter', id: String(config.filter_id), name: config.filter_name || String(config.filter_id), legacy: true };
+  if (config.filter_name) return { kind: 'saved_filter', id: '', name: String(config.filter_name), legacy: true };
+  if (config.filter) return {
+    kind: 'raw_filter',
+    id: TODOIST_KIOSK_LEGACY_RAW_ID,
+    name: String(config.filter_label || 'Custom Query'),
+    query: String(config.filter),
+    legacy: true
+  };
+  return null;
+}
+
+function mergeKioskSources(backendSources, config = {}) {
+  const projects = (Array.isArray(backendSources) ? backendSources : [])
+    .filter(source => source?.kind === 'project' && source.id && source.name)
+    .map(source => ({ kind: 'project', id: String(source.id), name: String(source.name) }))
+    .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }) || a.id.localeCompare(b.id));
+  const saved = (Array.isArray(backendSources) ? backendSources : [])
+    .filter(source => source?.kind === 'saved_filter' && source.id && source.name)
+    .map(source => ({ kind: 'saved_filter', id: String(source.id), name: String(source.name) }));
+  const raw = normalizeRawFilters(config);
+  if (!raw.length && config.filter && !config.default_source) raw.push(legacyKioskSource(config));
+  const filters = [...saved, ...raw]
+    .filter(Boolean)
+    .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }) || (a.kind === b.kind ? a.id.localeCompare(b.id) : (a.kind === 'saved_filter' ? -1 : 1)));
+  const nameCounts = new Map();
+  filters.forEach(source => nameCounts.set(source.name.toLocaleLowerCase(), (nameCounts.get(source.name.toLocaleLowerCase()) || 0) + 1));
+  const kindCounts = new Map();
+  filters.forEach(source => {
+    const key = `${source.name.toLocaleLowerCase()}:${source.kind}`;
+    kindCounts.set(key, (kindCounts.get(key) || 0) + 1);
+  });
+  return [...projects, ...filters].map(source => {
+    const prefix = source.kind === 'project' ? 'Project' : 'Filter';
+    let suffix = '';
+    if (source.kind !== 'project' && nameCounts.get(source.name.toLocaleLowerCase()) > 1) {
+      const type = source.kind === 'saved_filter' ? 'Saved' : 'Raw';
+      const sameKindCount = kindCounts.get(`${source.name.toLocaleLowerCase()}:${source.kind}`) || 0;
+      suffix = sameKindCount > 1 ? ` (${type} · ${source.id.slice(-6)})` : ` (${type})`;
+    }
+    return { ...source, label: `${prefix}: ${source.name}${suffix}` };
+  });
+}
 
 class TodoistTaskFlow extends HTMLElement {
   // --- CONFIGURATION ---
@@ -9,8 +67,11 @@ class TodoistTaskFlow extends HTMLElement {
       entities: [],
       title: "Mine Opgaver",
       filter: "",
+      filter_label: "Custom Query",
       filter_name: "",
       filter_id: "",
+      project_id: "",
+      raw_filters: [],
       default_filter: "all",
       show_completed: false,
       show_project_tag: false,
@@ -56,6 +117,12 @@ class TodoistTaskFlow extends HTMLElement {
     this.tasks = [];
     this.errorMessage = '';
     this.hasInitialized = false;
+    this._backendSources = [];
+    this.kioskSources = [];
+    this.sourceCatalogSupported = null;
+    this.activeSource = this.getConfiguredKioskSource();
+    this._taskRequestSequence = 0;
+    this._sourceLoading = false;
     this._collapsedGroups = new Set();
     if (!this.shadowRoot) this.attachShadow({ mode: 'open' });
   }
@@ -68,17 +135,74 @@ class TodoistTaskFlow extends HTMLElement {
 
   hasConfiguredSource() {
     if (this.isKioskMode()) {
-      return Boolean(this.config.filter || this.config.filter_name || this.config.filter_id);
+      return Boolean(this.config.default_source || this.config.project_id || this.config.filter || this.config.filter_name || this.config.filter_id || normalizeRawFilters(this.config).length);
     }
     return Boolean(this.currentEntity);
   }
 
-  getKioskTaskRequest() {
+  getConfiguredKioskSource() {
+    const configured = this.config?.default_source;
+    if (configured?.kind && configured?.id) {
+      const raw = normalizeRawFilters(this.config).find(source => source.id === String(configured.id));
+      return raw || { kind: String(configured.kind), id: String(configured.id), name: String(configured.id) };
+    }
+    return legacyKioskSource(this.config);
+  }
+
+  resolveConfiguredKioskSource() {
+    const configured = this.config?.default_source;
+    if (configured?.kind && configured?.id) {
+      const match = this.kioskSources.find(source => source.kind === configured.kind && source.id === String(configured.id));
+      if (match) return match;
+      return this.kioskSources[0] || legacyKioskSource(this.config);
+    }
+    const legacy = legacyKioskSource(this.config);
+    if (legacy?.kind === 'saved_filter' && !legacy.id) {
+      const matches = this.kioskSources.filter(source => source.kind === 'saved_filter' && source.name.toLocaleLowerCase() === legacy.name.toLocaleLowerCase());
+      if (matches.length === 1) return matches[0];
+    }
+    if (legacy) {
+      return this.kioskSources.find(source => kioskSourceKey(source) === kioskSourceKey(legacy)) || legacy;
+    }
+    return this.kioskSources[0] || null;
+  }
+
+  getKioskTaskRequest(source = this.activeSource || this.getConfiguredKioskSource()) {
     const request = { type: 'todoist_kiosk/tasks' };
-    if (this.config.filter_id) request.filter_id = this.config.filter_id;
+    if (source?.kind === 'project') request.project_id = source.id;
+    else if (source?.kind === 'saved_filter' && source.id) request.filter_id = source.id;
+    else if (source?.kind === 'saved_filter') request.filter_name = source.name;
+    else if (source?.kind === 'raw_filter') request.filter = source.query;
+    else if (this.config.filter_id) request.filter_id = this.config.filter_id;
     else if (this.config.filter_name) request.filter_name = this.config.filter_name;
     else request.filter = this.config.filter;
     return request;
+  }
+
+  async loadKioskSources() {
+    if (!this._hass || !this.isKioskMode()) return false;
+    try {
+      const response = await this._hass.callWS({ type: 'todoist_kiosk/sources' });
+      if (!response || !Array.isArray(response.sources)) throw new Error('Invalid source catalog response');
+      this._backendSources = response.sources;
+      this.kioskSources = mergeKioskSources(this._backendSources, this.config);
+      this.sourceCatalogSupported = true;
+      const activeKey = kioskSourceKey(this.activeSource);
+      this.activeSource = this.kioskSources.find(source => kioskSourceKey(source) === activeKey) || this.resolveConfiguredKioskSource();
+      return true;
+    } catch (e) {
+      this.sourceCatalogSupported = false;
+      this._backendSources = [];
+      this.kioskSources = [];
+      this.activeSource = legacyKioskSource(this.config);
+      console.warn('Todoist Kiosk source catalog is unavailable; using the configured legacy source:', e?.message || e);
+      return false;
+    }
+  }
+
+  async initializeKiosk() {
+    await this.loadKioskSources();
+    await this.fetchTasks();
   }
 
   normalizeTaskForDisplay(task) {
@@ -111,7 +235,10 @@ class TodoistTaskFlow extends HTMLElement {
 
     if (!this.hasInitialized) {
       this.hasInitialized = true;
-      if (!this.tasks.length) this.fetchTasks();
+      if (!this.tasks.length) {
+        if (this.isKioskMode()) this.initializeKiosk();
+        else this.fetchTasks();
+      }
     }
 
     if (!this.shadowRoot.innerHTML) {
@@ -119,19 +246,24 @@ class TodoistTaskFlow extends HTMLElement {
     }
   }
 
-  async fetchTasks() {
+  async fetchTasks(options = {}) {
     if (!this._hass || !this.hasConfiguredSource()) return;
 
+    const requestSequence = ++this._taskRequestSequence;
+    const source = options.source || this.activeSource || this.getConfiguredKioskSource();
+
     const list = this.shadowRoot.querySelector('.task-list');
-    this._savedScrollTop = list ? list.scrollTop : 0;
+    const savedScrollTop = list ? list.scrollTop : 0;
 
     const refreshBtn = this.shadowRoot.querySelector('.refresh-btn');
     if (refreshBtn) refreshBtn.classList.add('spinning');
 
     try {
       const response = this.isKioskMode()
-        ? await this._hass.callWS(this.getKioskTaskRequest())
+        ? await this._hass.callWS(this.getKioskTaskRequest(source))
         : await this._hass.callWS({ type: "todo/item/list", entity_id: this.currentEntity });
+
+      if (requestSequence !== this._taskRequestSequence) return false;
 
       // SORTERING LOGIK
       let items = (this.isKioskMode() ? response.tasks : response.items) || [];
@@ -155,27 +287,55 @@ class TodoistTaskFlow extends HTMLElement {
       }
       this.tasks = items;
       this.errorMessage = '';
+      this._sourceLoading = false;
 
     } catch (e) {
+      if (requestSequence !== this._taskRequestSequence) return false;
       console.warn("Unable to fetch Todoist tasks:", e.message);
-      this.errorMessage = e?.message || this.localize('loading_error');
+      if (options.rollback) {
+        this.activeSource = options.rollback.source;
+        this.tasks = options.rollback.tasks;
+        this.errorMessage = options.rollback.errorMessage;
+      } else {
+        this.errorMessage = e?.message || this.localize('loading_error');
+      }
+      this._sourceLoading = false;
+      this.render();
+      return false;
     }
 
     this.render();
 
     const newList = this.shadowRoot.querySelector('.task-list');
-    if (newList && this._savedScrollTop) {
-        newList.scrollTop = this._savedScrollTop;
+    if (newList) {
+        newList.scrollTop = options.resetScroll ? 0 : savedScrollTop;
     }
+    return true;
+  }
+
+  async selectKioskSource(value) {
+    const nextSource = this.kioskSources.find(source => kioskSourceKey(source) === value);
+    if (!nextSource || kioskSourceKey(nextSource) === kioskSourceKey(this.activeSource)) return true;
+    const rollback = {
+      source: this.activeSource,
+      tasks: this.tasks,
+      errorMessage: this.errorMessage
+    };
+    this.activeSource = nextSource;
+    this._sourceLoading = true;
+    this.errorMessage = '';
+    this.render();
+    return this.fetchTasks({ source: nextSource, resetScroll: true, rollback });
   }
 
   async manualRefresh() {
-    if (this.isKioskMode() && (this.config.filter_id || this.config.filter_name)) {
+    if (this.isKioskMode()) {
       try {
         await this._hass.callWS({ type: 'todoist_kiosk/refresh_metadata' });
       } catch (e) {
         console.warn('Unable to refresh Todoist metadata:', e.message);
       }
+      await this.loadKioskSources();
     }
     await this.fetchTasks();
   }
@@ -627,6 +787,13 @@ class TodoistTaskFlow extends HTMLElement {
     if (!isKiosk && entities.length > 1 && this._hass && !hideHeader) {
         const options = entities.map(entity => `<option value="${entity}" ${entity === this.currentEntity ? 'selected' : ''}>${this._hass.states[entity]?.attributes.friendly_name || entity}</option>`).join('');
         projectSelectorHtml = `<div class="controls"><select id="project-selector">${options}</select></div>`;
+    } else if (isKiosk && this.sourceCatalogSupported === true && this.kioskSources.length && !hideHeader) {
+        const activeKey = kioskSourceKey(this.activeSource);
+        const options = this.kioskSources.map(source => {
+            const key = kioskSourceKey(source);
+            return `<option value="${this.escapeAttribute(key)}" ${key === activeKey ? 'selected' : ''}>${this.escapeHtml(source.label)}</option>`;
+        }).join('');
+        projectSelectorHtml = `<div class="controls"><select id="kiosk-source-selector" ${this._sourceLoading ? 'disabled' : ''}>${options}</select></div>`;
     }
 
     const style = `
@@ -649,9 +816,11 @@ class TodoistTaskFlow extends HTMLElement {
         .refresh-btn.spinning { transform: rotate(360deg); }
         .controls { display: flex; gap: 8px; flex-wrap: wrap;}
         select { flex-grow: 1; padding: 8px; border-radius: 6px; border: none; background: rgba(255,255,255,0.9); color: #333; font-family: inherit; cursor: pointer; }
+        select:disabled { cursor: wait; opacity: 0.65; }
         .filter-btn { flex: 1; min-width: 50px; padding: 6px 4px; border: none; border-radius: 15px; background: rgba(255,255,255,0.2); color: white; cursor: pointer; font-size: 0.8rem; transition: all 0.2s; white-space: nowrap; }
         .filter-btn.active { background: white; color: #333; font-weight: 700; box-shadow: 0 2px 4px rgba(0,0,0,0.2); }
         .task-list { padding: 0; margin: 0; list-style: none; min-height: 50px; overflow-y: auto; max-height: 400px; }
+        .task-list.source-loading { opacity: 0.45; pointer-events: none; transition: opacity 0.2s; }
         .group-header { padding: 12px 16px 4px 16px; font-weight: bold; font-size: 0.9rem; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid transparent; margin-top: 5px; }
         .task-item { padding: 12px var(--card-padding); border-bottom: 1px solid var(--divider-color); display: flex; align-items: flex-start; gap: 12px; transition: opacity 0.2s; }
         .theme-minimalist ha-card { border: none; box-shadow: none; background: transparent !important; color: ${textColor} !important; }
@@ -725,7 +894,7 @@ class TodoistTaskFlow extends HTMLElement {
         </div>
         ` : ''}
         ${this.errorMessage ? `<div class="error-state">${this.escapeHtml(this.errorMessage)}</div>` : ''}
-        <ul class="task-list">
+        <ul class="task-list ${this._sourceLoading ? 'source-loading' : ''}">
           ${taskListHtml}
         </ul>
         ${!hideAddTask && (!isKiosk || this.config.allow_quick_add !== false) ? `
@@ -740,6 +909,7 @@ class TodoistTaskFlow extends HTMLElement {
 
   addEventListeners() {
     const select = this.shadowRoot.getElementById('project-selector'); if (select) select.addEventListener('change', (e) => { this.currentEntity = e.target.value; this.fetchTasks(); });
+    const kioskSelect = this.shadowRoot.getElementById('kiosk-source-selector'); if (kioskSelect) kioskSelect.addEventListener('change', (e) => this.selectKioskSource(e.target.value));
     const refreshBtn = this.shadowRoot.querySelector('.refresh-btn'); if (refreshBtn) refreshBtn.addEventListener('click', () => this.manualRefresh());
     this.shadowRoot.querySelectorAll('.filter-btn').forEach(btn => { btn.addEventListener('click', (e) => { this.filter = e.target.dataset.filter; this.render(); }); });
     this.shadowRoot.querySelectorAll('.task-check').forEach(box => {
@@ -778,16 +948,132 @@ if (!customElements.get('todoist-task-flow')) customElements.define('todoist-tas
 
 // --- EDITOR KLASSE ---
 class TodoistTaskFlowEditor extends HTMLElement {
-  set hass(hass) { this._hass = hass; if (this._config) this.render(); }
-  setConfig(config) { this._config = config; this.render(); }
+  set hass(hass) {
+    this._hass = hass;
+    if (this._config) {
+      this.render();
+      this.loadKioskSources();
+    }
+  }
+  setConfig(config) {
+    this._config = config;
+    this.render();
+    this.loadKioskSources();
+  }
   configChanged(newConfig) { const event = new CustomEvent("config-changed", { detail: { config: newConfig }, bubbles: true, composed: true, }); this.dispatchEvent(event); }
   escapeAttribute(value) { return String(value ?? '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+
+  isKioskConfig() {
+    if (!this._config) return false;
+    return this._config.type === 'custom:todoist-kiosk-card' || this._config.data_source === 'todoist_kiosk' || Boolean(this._config.default_source || this._config.project_id || this._config.filter || this._config.filter_name || this._config.filter_id);
+  }
+
+  async loadKioskSources() {
+    if (!this._hass || !this.isKioskConfig() || this._sourcesLoading || this._sourcesLoaded) return;
+    this._sourcesLoading = true;
+    try {
+      const response = await this._hass.callWS({ type: 'todoist_kiosk/sources' });
+      this._backendSources = Array.isArray(response?.sources) ? response.sources : [];
+    } catch (e) {
+      this._backendSources = [];
+    } finally {
+      this._sourcesLoading = false;
+      this._sourcesLoaded = true;
+      if (this._config) this.render();
+    }
+  }
+
+  editorSources(config = this._config) {
+    const sources = mergeKioskSources(this._backendSources || [], config);
+    const legacy = config.default_source ? null : legacyKioskSource(config);
+    if (legacy?.kind === 'saved_filter' && !legacy.id) {
+      const matches = sources.filter(source => source.kind === 'saved_filter' && source.name.toLocaleLowerCase() === legacy.name.toLocaleLowerCase());
+      if (!matches.length) sources.push({ ...legacy, id: `name:${legacy.name}`, label: `Filter: ${legacy.name}` });
+    } else if (legacy && !sources.some(source => kioskSourceKey(source) === kioskSourceKey(legacy))) {
+      sources.push({ ...legacy, label: `${legacy.kind === 'project' ? 'Project' : 'Filter'}: ${legacy.name}` });
+    }
+    return sources;
+  }
+
+  editorDefaultKey(sources) {
+    const configured = this._config.default_source;
+    if (configured?.kind && configured?.id) return kioskSourceKey(configured);
+    const legacy = legacyKioskSource(this._config);
+    if (legacy?.kind === 'saved_filter' && !legacy.id) {
+      const match = sources.find(source => source.kind === 'saved_filter' && source.name.toLocaleLowerCase() === legacy.name.toLocaleLowerCase());
+      return kioskSourceKey(match);
+    }
+    return kioskSourceKey(legacy || sources[0]);
+  }
+
+  generateRawFilterId(name, filters = this._config.raw_filters || []) {
+    const base = String(name || 'filter').toLocaleLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'filter';
+    const used = new Set(filters.map(item => String(item?.id || '')));
+    let id = base;
+    let suffix = 2;
+    while (used.has(id)) id = `${base}_${suffix++}`;
+    return id;
+  }
+
+  validateRawFilters(filters) {
+    const ids = new Set();
+    const names = new Set();
+    for (const item of filters) {
+      const id = String(item?.id || '').trim();
+      const name = String(item?.name || '').trim();
+      const query = String(item?.query || '').trim();
+      if (!id || ids.has(id)) return 'Raw filter IDs must be unique.';
+      if (!name) return 'Raw filter names are required.';
+      const foldedName = name.toLocaleLowerCase();
+      if (names.has(foldedName)) return 'Raw filter names must be unique.';
+      if (!query) return 'Raw filter queries are required.';
+      if (query.length > 1024) return 'Raw filter queries cannot exceed 1,024 characters.';
+      ids.add(id);
+      names.add(foldedName);
+    }
+    return '';
+  }
+
+  updateRawFilter(index, field, value, input) {
+    const filters = (this._config.raw_filters || []).map(item => ({ ...item }));
+    if (!filters[index]) return;
+    filters[index][field] = value.trim();
+    const error = this.validateRawFilters(filters);
+    if (input?.setCustomValidity) {
+      input.setCustomValidity(error);
+      if (error && input.reportValidity) input.reportValidity();
+    }
+    if (error) return;
+    this.configChanged({ ...this._config, raw_filters: filters });
+  }
+
+  addRawFilter() {
+    const filters = [...(this._config.raw_filters || [])];
+    const usedNames = new Set(filters.map(item => String(item?.name || '').trim().toLocaleLowerCase()));
+    let name = 'New Filter';
+    let suffix = 2;
+    while (usedNames.has(name.toLocaleLowerCase())) name = `New Filter ${suffix++}`;
+    filters.push({ id: this.generateRawFilterId(name, filters), name, query: 'today' });
+    this.configChanged({ ...this._config, raw_filters: filters });
+  }
+
+  removeRawFilter(index) {
+    const removed = (this._config.raw_filters || [])[index];
+    const filters = (this._config.raw_filters || []).filter((_, itemIndex) => itemIndex !== index);
+    const next = { ...this._config, raw_filters: filters };
+    if (removed && next.default_source?.kind === 'raw_filter' && String(next.default_source.id) === String(removed.id)) {
+      const replacement = this.editorSources(next)[0];
+      if (replacement) next.default_source = { kind: replacement.kind, id: replacement.id };
+      else delete next.default_source;
+    }
+    this.configChanged(next);
+  }
 
   render() {
     if (!this.shadowRoot) this.attachShadow({ mode: 'open' });
     const { title, data_source, filter, filter_name, filter_id, default_filter, show_completed, header_color, compact_view, enabled_filters, theme, background_color, background_opacity, text_color, bubble_color, bubble_opacity, use_gamification, visual_effect, sound_effect, show_project_tag, show_project, show_due, show_deadline, show_priority, show_labels, allow_complete, allow_quick_add, hide_header, hide_add_task, max_items, font_scale, sort_order } = this._config;
     const isDedicatedKiosk = this._config.type === 'custom:todoist-kiosk-card';
-    const isKiosk = isDedicatedKiosk || (data_source ? data_source === 'todoist_kiosk' : Boolean(filter || filter_name || filter_id));
+    const isKiosk = isDedicatedKiosk || (data_source ? data_source === 'todoist_kiosk' : Boolean(this._config.default_source || this._config.project_id || filter || filter_name || filter_id || this._config.raw_filters?.length));
     const allTodoEntities = this._hass ? Object.keys(this._hass.states).filter(eid => eid.startsWith('todo.')) : [];
     let currentEntities = this._config.entities || [];
     if (typeof currentEntities === 'string') currentEntities = currentEntities.split(',').map(e => e.trim());
@@ -803,7 +1089,7 @@ class TodoistTaskFlowEditor extends HTMLElement {
             bubble_color: 'Boble Farve', bubble_opacity: 'Boble Gennemsigtighed', bubble_help: 'Vælg farve til boblerne.',
             gamification: 'Gamification 🎮', use_gamification: 'Aktiver Gamification', visual_effect: 'Visuel Effekt', sound_effect: 'Lydeffekt',
             show_project_tag: 'Vis projekt-tag', hide_header: 'Skjul Header', hide_add_task: 'Skjul tilføjelse af opgaver', max_items: 'Max antal opgaver (0 = alle)', font_scale: 'Skriftstørrelse (%)', sort_order: 'Sortering',
-            data_source: 'Datakilde', generic_source: 'Home Assistant-opgavelister', kiosk_source: 'Todoist Kiosk-integration', kiosk_filtering: 'Todoist Kiosk-filter', raw_filter: 'Rå Todoist-filterforespørgsel', filter_name: 'Gemt filternavn', filter_id: 'Gemt filter-ID', filter_help: 'Angiv kun én filtervælger. ID har forrang, derefter navn og rå forespørgsel.', show_project: 'Vis projekt', show_due: 'Vis forfaldsdato', show_deadline: 'Vis deadline', show_priority: 'Vis prioritet', show_labels: 'Vis etiketter', allow_complete: 'Tillad fuldførelse', allow_quick_add: 'Tillad Quick Add',
+            data_source: 'Datakilde', generic_source: 'Home Assistant-opgavelister', kiosk_source: 'Todoist Kiosk-integration', kiosk_filtering: 'Todoist Kiosk-kilder', raw_filter: 'Rå Todoist-filterforespørgsel', filter_name: 'Gemt filternavn', filter_id: 'Gemt filter-ID', filter_help: 'Ældre konfiguration bevares som reserve.', default_source: 'Standardkilde', raw_filters: 'Navngivne rå filtre', raw_filter_name: 'Navn', raw_filter_query: 'Todoist-forespørgsel', add_raw_filter: 'Tilføj råt filter', remove: 'Fjern', no_sources: 'Ingen kilder tilgængelige endnu', raw_filter_help: 'Navne skal være unikke. Forespørgsler må højst være 1.024 tegn.', show_project: 'Vis projekt', show_due: 'Vis forfaldsdato', show_deadline: 'Vis deadline', show_priority: 'Vis prioritet', show_labels: 'Vis etiketter', allow_complete: 'Tillad fuldførelse', allow_quick_add: 'Tillad Quick Add',
             sort_options: { date: 'Dato (Standard)', alpha: 'Alfabetisk', newest: 'Senest tilføjet' },
             themes: { standard: 'Standard', minimalist: 'Minimalist', frosted: 'Frosted Glass', bubble: 'Bubble Card' },
             filters: { all: 'Alle', today: 'I dag', overdue: 'Forfaldne', today_overdue: 'Nu', week: 'Uge', month: 'Måned' },
@@ -817,7 +1103,7 @@ class TodoistTaskFlowEditor extends HTMLElement {
             bubble_color: 'Bubble Color', bubble_opacity: 'Bubble Opacity', bubble_help: 'Pick color for the task bubbles.',
             gamification: 'Gamification 🎮', use_gamification: 'Enable Gamification', visual_effect: 'Visual Effect', sound_effect: 'Sound Effect',
             show_project_tag: 'Show Project Tag', hide_header: 'Hide Header', hide_add_task: 'Hide Add Task Input', max_items: 'Max Items (0 = all)', font_scale: 'Font Scale (%)', sort_order: 'Sort Order',
-            data_source: 'Data Source', generic_source: 'Home Assistant to-do lists', kiosk_source: 'Todoist Kiosk integration', kiosk_filtering: 'Todoist Kiosk Filter', raw_filter: 'Raw Todoist filter query', filter_name: 'Saved filter name', filter_id: 'Saved filter ID', filter_help: 'Set only one filter selector. ID takes precedence, then name, then raw query.', show_project: 'Show project', show_due: 'Show due date', show_deadline: 'Show deadline', show_priority: 'Show priority', show_labels: 'Show labels', allow_complete: 'Allow completion', allow_quick_add: 'Allow Quick Add',
+            data_source: 'Data Source', generic_source: 'Home Assistant to-do lists', kiosk_source: 'Todoist Kiosk integration', kiosk_filtering: 'Todoist Kiosk Sources', raw_filter: 'Raw Todoist filter query', filter_name: 'Saved filter name', filter_id: 'Saved filter ID', filter_help: 'Legacy selectors are preserved as a compatibility fallback.', default_source: 'Default source', raw_filters: 'Named raw filters', raw_filter_name: 'Name', raw_filter_query: 'Todoist query', add_raw_filter: 'Add raw filter', remove: 'Remove', no_sources: 'No sources available yet', raw_filter_help: 'Names must be unique. Queries are limited to 1,024 characters.', show_project: 'Show project', show_due: 'Show due date', show_deadline: 'Show deadline', show_priority: 'Show priority', show_labels: 'Show labels', allow_complete: 'Allow completion', allow_quick_add: 'Allow Quick Add',
             sort_options: { date: 'Date (Default)', alpha: 'Alphabetical', newest: 'Newest First' },
             themes: { standard: 'Standard', minimalist: 'Minimalist', frosted: 'Frosted Glass', bubble: 'Bubble Card' },
             filters: { all: 'All', today: 'Today', overdue: 'Overdue', today_overdue: 'Now', week: 'Week', month: 'Month' },
@@ -835,6 +1121,9 @@ class TodoistTaskFlowEditor extends HTMLElement {
     const showHeaderColor = !theme || theme === 'standard' || theme === 'frosted';
     const showBackgroundSettings = !theme || theme !== 'minimalist';
     const showBubbleSettings = theme === 'bubble';
+    const rawFilters = Array.isArray(this._config.raw_filters) ? this._config.raw_filters : [];
+    const sourceOptions = isKiosk ? this.editorSources() : [];
+    const defaultSourceKey = isKiosk ? this.editorDefaultKey(sourceOptions) : '';
 
     this.shadowRoot.innerHTML = `
       <style>
@@ -847,6 +1136,10 @@ class TodoistTaskFlowEditor extends HTMLElement {
         input[type="color"] { width: 100%; height: 40px; padding: 2px; }
         .help { font-size: 0.8em; color: var(--secondary-text-color); margin-top: 4px; }
         .filter-list { border: 1px solid var(--divider-color, #ccc); padding: 10px; border-radius: 4px; max-height: 200px; overflow-y: auto; background: rgba(0,0,0,0.03); }
+        .raw-filter-row { border: 1px solid var(--divider-color, #ccc); border-radius: 6px; padding: 10px; margin-bottom: 10px; }
+        .raw-filter-row textarea { width: 95%; min-height: 55px; }
+        .raw-filter-actions { display: flex; justify-content: flex-end; margin-top: 6px; }
+        button { padding: 7px 10px; border: 1px solid var(--divider-color, #ccc); border-radius: 4px; background: var(--secondary-background-color, #eee); color: var(--primary-text-color); cursor: pointer; }
         .section-header { font-weight: bold; font-size: 1.1em; margin-top: 20px; margin-bottom: 10px; border-bottom: 1px solid var(--divider-color, #ccc); padding-bottom: 5px; }
       </style>
       <div class="row"><label>${s.title}</label><input type="text" id="title-input" value="${this.escapeAttribute(title)}"></div>
@@ -854,9 +1147,18 @@ class TodoistTaskFlowEditor extends HTMLElement {
 
       ${isKiosk ? `
       <div class="section-header">${s.kiosk_filtering}</div>
-      <div class="row"><label>${s.filter_id}</label><input type="text" id="filter-id-input" value="${this.escapeAttribute(filter_id)}"></div>
-      <div class="row"><label>${s.filter_name}</label><input type="text" id="filter-name-input" value="${this.escapeAttribute(filter_name)}"></div>
-      <div class="row"><label>${s.raw_filter}</label><textarea id="raw-filter-input">${this.escapeAttribute(filter)}</textarea><div class="help">${s.filter_help}</div></div>
+      <div class="row"><label>${s.default_source}</label><select id="default-source-input" ${sourceOptions.length ? '' : 'disabled'}>${sourceOptions.length ? sourceOptions.map(source => `<option value="${this.escapeAttribute(kioskSourceKey(source))}" ${kioskSourceKey(source) === defaultSourceKey ? 'selected' : ''}>${this.escapeAttribute(source.label)}</option>`).join('') : `<option>${s.no_sources}</option>`}</select></div>
+      <div class="row"><label>${s.raw_filters}</label>
+        <div id="raw-filter-list">
+          ${rawFilters.map((item, index) => `<div class="raw-filter-row" data-index="${index}">
+            <label>${s.raw_filter_name}</label><input type="text" class="raw-filter-name" value="${this.escapeAttribute(item.name)}" required>
+            <label style="margin-top:8px;">${s.raw_filter_query}</label><textarea class="raw-filter-query" maxlength="1024" required>${this.escapeAttribute(item.query)}</textarea>
+            <div class="raw-filter-actions"><button type="button" class="remove-raw-filter">${s.remove}</button></div>
+          </div>`).join('')}
+        </div>
+        <button type="button" id="add-raw-filter">${s.add_raw_filter}</button>
+        <div class="help">${s.raw_filter_help}</div>
+      </div>
       ` : ''}
 
       <div class="row"><label>${s.theme}</label><select id="theme-input">${availableThemes.map(th => `<option value="${th.id}" ${(theme||'standard')===th.id?'selected':''}>${th.label}</option>`).join('')}</select></div>
@@ -921,7 +1223,7 @@ class TodoistTaskFlowEditor extends HTMLElement {
     if (!isDedicatedKiosk) {
         this.shadowRoot.getElementById("data-source-input").addEventListener("change", (e) => {
             const next = { ...this._config, data_source: e.target.value };
-            if (e.target.value === 'todoist_kiosk' && !next.filter && !next.filter_name && !next.filter_id) next.filter = TODOIST_KIOSK_DEFAULT_FILTER;
+            if (e.target.value === 'todoist_kiosk' && !next.default_source && !next.project_id && !next.filter && !next.filter_name && !next.filter_id && !next.raw_filters?.length) next.filter = TODOIST_KIOSK_DEFAULT_FILTER;
             this.configChanged(next);
         });
     }
@@ -962,9 +1264,35 @@ class TodoistTaskFlowEditor extends HTMLElement {
     }
 
     if (isKiosk) {
-        this.shadowRoot.getElementById("filter-id-input").onchange = (e) => this.configChanged({ ...this._config, filter_id: e.target.value.trim() });
-        this.shadowRoot.getElementById("filter-name-input").onchange = (e) => this.configChanged({ ...this._config, filter_name: e.target.value.trim() });
-        this.shadowRoot.getElementById("raw-filter-input").onchange = (e) => this.configChanged({ ...this._config, filter: e.target.value.trim() });
+        const defaultSourceInput = this.shadowRoot.getElementById("default-source-input");
+        if (defaultSourceInput && sourceOptions.length) defaultSourceInput.onchange = (e) => {
+            const selected = sourceOptions.find(source => kioskSourceKey(source) === e.target.value);
+            if (!selected) return;
+            if (selected.legacy && selected.kind === 'saved_filter' && selected.id.startsWith('name:')) {
+                const next = { ...this._config };
+                delete next.default_source;
+                this.configChanged(next);
+                return;
+            }
+            this.configChanged({ ...this._config, default_source: { kind: selected.kind, id: selected.id } });
+        };
+        const addRawFilterButton = this.shadowRoot.getElementById("add-raw-filter");
+        if (addRawFilterButton) addRawFilterButton.onclick = () => this.addRawFilter();
+        this.shadowRoot.querySelectorAll('.raw-filter-row').forEach(row => {
+            const index = Number(row.dataset.index);
+            const nameInput = row.querySelector('.raw-filter-name');
+            const queryInput = row.querySelector('.raw-filter-query');
+            const removeButton = row.querySelector('.remove-raw-filter');
+            if (nameInput) nameInput.onchange = (e) => this.updateRawFilter(index, 'name', e.target.value, e.target);
+            if (queryInput) queryInput.onchange = (e) => this.updateRawFilter(index, 'query', e.target.value, e.target);
+            if (removeButton) removeButton.onclick = () => this.removeRawFilter(index);
+        });
+        const filterIdInput = this.shadowRoot.getElementById("filter-id-input");
+        const filterNameInput = this.shadowRoot.getElementById("filter-name-input");
+        const rawFilterInput = this.shadowRoot.getElementById("raw-filter-input");
+        if (filterIdInput) filterIdInput.onchange = (e) => this.configChanged({ ...this._config, filter_id: e.target.value.trim() });
+        if (filterNameInput) filterNameInput.onchange = (e) => this.configChanged({ ...this._config, filter_name: e.target.value.trim() });
+        if (rawFilterInput) rawFilterInput.onchange = (e) => this.configChanged({ ...this._config, filter: e.target.value.trim() });
         this.shadowRoot.getElementById("show-project-input").onchange = (e) => this.configChanged({ ...this._config, show_project: e.target.checked });
         this.shadowRoot.getElementById("show-due-input").onchange = (e) => this.configChanged({ ...this._config, show_due: e.target.checked });
         this.shadowRoot.getElementById("show-deadline-input").onchange = (e) => this.configChanged({ ...this._config, show_deadline: e.target.checked });
@@ -993,6 +1321,8 @@ class TodoistKioskCard extends TodoistTaskFlow {
       data_source: 'todoist_kiosk',
       title: 'Tasks',
       filter: TODOIST_KIOSK_DEFAULT_FILTER,
+      raw_filters: [{ id: 'default_query', name: 'Custom Query', query: TODOIST_KIOSK_DEFAULT_FILTER }],
+      default_source: { kind: 'raw_filter', id: 'default_query' },
       show_project: true,
       show_due: true,
       show_deadline: true,

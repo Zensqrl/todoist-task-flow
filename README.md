@@ -13,6 +13,22 @@ The card now has two compatible data modes:
 
 Install and configure the companion [`ha-todoist-enhanced`](https://github.com/Zensqrl/ha-todoist-enhanced) integration first. The Todoist API token is stored only in Home Assistant; this card talks exclusively to Home Assistant over its authenticated WebSocket connection.
 
+The header selector combines every active project, saved Todoist filter, and named raw query, using `Project: ` and `Filter: ` prefixes:
+
+```yaml
+type: custom:todoist-kiosk-card
+title: Tasks
+raw_filters:
+  - id: month_ahead
+    name: Month Ahead
+    query: "due before: first day"
+default_source:
+  kind: raw_filter
+  id: month_ahead
+```
+
+The visual editor generates raw-filter IDs and lets you manage the queries and choose the default. Selecting another source on the card affects only the displayed tasks and resets after a dashboard reload. Quick Add behavior is unchanged.
+
 Raw-filter example:
 
 ```yaml
@@ -38,7 +54,7 @@ title: Tasks
 filter_name: Kiosk Upcoming
 ```
 
-For duplicate saved-filter names, configure the stable `filter_id` instead. Set only one of `filter`, `filter_name`, or `filter_id`; the card uses ID, then name, then raw query if more than one is present.
+For duplicate saved-filter names, configure the stable `filter_id` instead. Existing `project_id`, `filter`, `filter_name`, and `filter_id` configurations remain supported when `default_source` is absent. A legacy raw query is labeled `Filter: Custom Query`; set `filter_label` to customize that label.
 
 ## 🚀 Why this card? (The New Architecture)
 
