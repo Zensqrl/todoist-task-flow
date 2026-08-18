@@ -4,6 +4,42 @@
 
 An advanced, yet easy-to-use card for Home Assistant that displays your Todoist tasks. It is designed to look and feel like a "native" app directly in your dashboard.
 
+The card now has two compatible data modes:
+
+- `custom:todoist-task-flow` retains the original Home Assistant `todo` entity behavior.
+- `custom:todoist-kiosk-card` uses the companion `todoist_kiosk` custom integration for native Todoist filters, rich metadata, recurring-safe completion, and Quick Add.
+
+## Todoist Kiosk mode
+
+Install and configure the companion [`ha-todoist-enhanced`](https://github.com/Zensqrl/ha-todoist-enhanced) integration first. The Todoist API token is stored only in Home Assistant; this card talks exclusively to Home Assistant over its authenticated WebSocket connection.
+
+Raw-filter example:
+
+```yaml
+type: custom:todoist-kiosk-card
+title: Tasks
+filter: >-
+  (due before: first day | deadline before: first day) &
+  (!#Daily Checklist | today)
+show_project: true
+show_due: true
+show_deadline: true
+show_priority: true
+show_labels: false
+allow_complete: true
+allow_quick_add: true
+```
+
+Saved filters are preferable when the query should remain managed in Todoist:
+
+```yaml
+type: custom:todoist-kiosk-card
+title: Tasks
+filter_name: Kiosk Upcoming
+```
+
+For duplicate saved-filter names, configure the stable `filter_id` instead. Set only one of `filter`, `filter_name`, or `filter_id`; the card uses ID, then name, then raw query if more than one is present.
+
 ## 🚀 Why this card? (The New Architecture)
 
 This card is built specifically for Home Assistant's modern **`todoist` integration**.
